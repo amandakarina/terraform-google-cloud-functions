@@ -68,3 +68,8 @@ variable "ingress_policies" {
   }))
   default = []
 }
+
+variable "swp_certificate_path" {
+  description = "Full path of the folder where the certificate is located (key and cert)"
+  type        = string
+}
