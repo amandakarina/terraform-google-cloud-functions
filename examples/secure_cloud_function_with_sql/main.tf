@@ -129,23 +129,29 @@ module "cloud_sql_private_service_access" {
 }
 
 module "safer_mysql_db" {
-  source               = "GoogleCloudPlatform/sql-db/google//modules/safer_mysql"
+  source               = "GoogleCloudPlatform/sql-db/google//modules/mysql"
   version              = "~> 15.0"
   name                 = "csql-test"
   db_name              = local.db_name
   random_instance_name = true
   project_id           = module.secure_harness.serverless_project_ids[1]
   encryption_key_name  = module.kms_keys.keys["key-sql"]
+  enable_default_user  = false
+  deletion_protection  = false
+  database_version     = "MYSQL_8_0"
+  region               = local.region
+  zone                 = local.zone_sql
+  tier                 = "db-n1-standard-1"
 
-  deletion_protection = false
-
-  database_version   = "MYSQL_8_0"
-  region             = local.region
-  zone               = local.zone_sql
-  tier               = "db-n1-standard-1"
-  assign_public_ip   = "false"
-  vpc_network        = module.secure_harness.service_vpc[0].network.id
-  allocated_ip_range = module.cloud_sql_private_service_access.google_compute_global_address_name
+  ip_configuration = {
+    ipv4_enabled = false
+    # We never set authorized networks, we need all connections via the
+    # public IP to be mediated by Cloud SQL.
+    authorized_networks = []
+    require_ssl         = true
+    private_network     = module.secure_harness.service_vpc[0].network.id
+    allocated_ip_range  = module.cloud_sql_private_service_access.google_compute_global_address_name
+  }
 
   depends_on = [module.cloud_sql_private_service_access]
 }
@@ -404,19 +410,4 @@ module "secure_cloud_function" {
     null_resource.create_and_populate_db,
     null_resource.create_user_pwd
   ]
-}
-
-module "secure-web-proxy" {
-  source = "git::https://github.com/Samir-Cit/terraform-google-cloud-functions.git//modules/secure-web-proxy?ref=feat/add-secure-web-proxy"
-
-  project_id = module.secure_harness.network_project_id[0]
-  region     = local.region
-  network_id = module.secure_harness.service_vpc[0].network.id
-  swp_url_lists = [
-    "*google.com/go*",
-    "*github.com/GoogleCloudPlatform*",
-    "*github.com/cloudevents*",
-    "*github.com/go-sql-driver*"
-  ]
-  swp_certificate_path = var.swp_certificate_path
 }
