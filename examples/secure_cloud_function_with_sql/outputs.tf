@@ -64,9 +64,14 @@ output "service_vpc_name" {
   description = "The Network self-link created in harness."
 }
 
-output "secret_manager_name" {
-  value       = local.secret_name
+output "pwd_secret_manager_name" {
+  value       = local.pwd_secret_name
   description = "Secret Manager name created to store Database password."
+}
+
+output "certificate_secret_manager_name" {
+  value       = local.cert_secret_name
+  description = "Secret Manager name created to store Database certificate."
 }
 
 output "scheduler_name" {
@@ -74,14 +79,24 @@ output "scheduler_name" {
   description = "Cloud Scheduler Job name."
 }
 
-output "secret_manager_id" {
+output "pwd_secret_manager_id" {
   value       = google_secret_manager_secret.password_secret.id
   description = "Secret Manager id created to store Database password."
 }
 
-output "secret_manager_version" {
-  value       = data.google_secret_manager_secret_version.latest_version.version
+output "pwd_secret_manager_version" {
+  value       = data.google_secret_manager_secret_version.pwd_latest_version.version
   description = "Secret Manager version created to store Database password."
+}
+
+output "certificate_secret_manager_id" {
+  value       = google_secret_manager_secret.certificate_secret.id
+  description = "Secret Manager id created to store Database certificate."
+}
+
+output "certificate_secret_manager_version" {
+  value       = data.google_secret_manager_secret_version.certificate_latest_version.version
+  description = "Secret Manager version created to store Database certificate."
 }
 
 output "service_vpc_subnet_name" {
@@ -162,4 +177,9 @@ output "cloudfunction_url" {
 output "topic_id" {
   value       = module.pubsub.id
   description = "The Pub/Sub topic which will trigger Cloud Function."
+}
+
+output "database_certificate" {
+  value       = module.safer_mysql_db.instance_server_ca_cert
+  description = "The CA Certificate used to connect to the SQL Instance via SSL."
 }

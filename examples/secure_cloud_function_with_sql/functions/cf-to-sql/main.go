@@ -16,16 +16,19 @@ package cloudsql
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
-	"net"
 	"os"
 
-	"cloud.google.com/go/cloudsqlconn"
 	"github.com/GoogleCloudPlatform/functions-framework-go/functions"
 	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/go-sql-driver/mysql"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 func init() {
@@ -37,37 +40,41 @@ func connect(ctx context.Context, e event.Event) error {
 	instanceUser := os.Getenv("INSTANCE_USER")
 	instancePWD := os.Getenv("INSTANCE_PWD")
 	instanceLocation := os.Getenv("INSTANCE_LOCATION")
+	instanceIP := os.Getenv("INSTANCE_IP")
+	instancePort := os.Getenv("INSTANCE_PORT")
 	instanceName := os.Getenv("INSTANCE_NAME")
 	databaseName := os.Getenv("DATABASE_NAME")
 
-	d, err := cloudsqlconn.NewDialer(
-		ctx,
-		cloudsqlconn.WithDefaultDialOptions(
-			cloudsqlconn.WithPrivateIP(),
-		),
-	)
-	if err != nil {
-		log.Fatal(err)
-		fmt.Errorf("Error creating new Dialer", err)
-	}
+	instanceConnectionName := fmt.Sprintf("%s:%s", instanceIP, instancePort)
+	// instanceConnectionName := fmt.Sprintf("%s:%s:%s", instanceProjectID, instanceLocation, instanceName)
+	dbURI := fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true",
+		instanceUser, instancePWD, instanceConnectionName, databaseName)
 
-	instanceConnectionName := fmt.Sprintf("%s:%s:%s", instanceProjectID, instanceLocation, instanceName)
-
-	fmt.Println("Registering Driver.")
-	mysql.RegisterDialContext("cloudsqlconn",
-		func(ctx context.Context, addr string) (net.Conn, error) {
-			return d.Dial(ctx, instanceConnectionName)
+	if dbRootCert, ok := os.LookupEnv("DB_ROOT_CERT"); ok { // e.g., '/path/to/my/server-ca.pem'
+		pool := x509.NewCertPool()
+		pem, err := ioutil.ReadFile(dbRootCert)
+		if err != nil {
+			return err
+		}
+		if ok := pool.AppendCertsFromPEM(pem); !ok {
+			return errors.New("unable to append root cert to pool")
+		}
+		mysql.RegisterTLSConfig("cloudsql", &tls.Config{
+			RootCAs:               pool,
+			InsecureSkipVerify:    true,
+			VerifyPeerCertificate: verifyPeerCertFunc(pool),
 		})
-
-	fmt.Println("Open connection.")
-	db, err := sql.Open(
-		"mysql",
-		fmt.Sprintf("%s:%s@cloudsqlconn(%s)/%s", instanceUser, instancePWD, instanceConnectionName, databaseName),
-	)
-	if err != nil {
-		log.Fatal(err)
-		fmt.Errorf("Error connecting to data base.", err)
+		dbURI += "&tls=cloudsql"
 	}
+	// [START cloud_sql_mysql_databasesql_connect_tcp]
+
+	// db is the pool of database connections.
+	log.Printf("Connecting to %s:%s:%s using IP %s and port %s", instanceProjectID, instanceLocation, instanceName, instanceIP, instancePort)
+	db, err := sql.Open("mysql", dbURI)
+	if err != nil {
+		return fmt.Errorf("sql.Open: %w", err)
+	}
+
 	err = db.Ping()
 	if err != nil {
 		log.Fatal(err)
@@ -92,4 +99,25 @@ func connect(ctx context.Context, e event.Event) error {
 	}
 
 	return err
+}
+
+// verifyPeerCertFunc returns a function that verifies the peer certificate is
+// in the cert pool.
+func verifyPeerCertFunc(pool *x509.CertPool) func([][]byte, [][]*x509.Certificate) error {
+	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if len(rawCerts) == 0 {
+			return errors.New("no certificates available to verify")
+		}
+
+		cert, err := x509.ParseCertificate(rawCerts[0])
+		if err != nil {
+			return err
+		}
+
+		opts := x509.VerifyOptions{Roots: pool}
+		if _, err = cert.Verify(opts); err != nil {
+			return err
+		}
+		return nil
+	}
 }

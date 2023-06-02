@@ -16,23 +16,26 @@
 
 
 locals {
-  location        = "us-central1"
-  region          = "us-central1"
-  zone_sql        = "us-central1-a"
-  repository_name = "rep-secure-cloud-function"
-  db_name         = "db-application"
-  db_user         = "app"
-  db_host         = "cloudsqlproxy~%"
-  secret_name     = "sct-sql-password"
-  labels          = { "env" = "dev" }
+  location         = "us-central1"
+  region           = "us-central1"
+  zone_sql         = "us-central1-a"
+  repository_name  = "rep-secure-cloud-function"
+  db_name          = "db-application"
+  db_user          = "app"
+  db_port          = "3306"
+  db_host          = "%"
+  pwd_secret_name  = "sct-sql-password"
+  cert_secret_name = "sct-sql-certificate"
+  labels           = { "env" = "dev" }
 }
 resource "random_id" "random_folder_suffix" {
   byte_length = 2
 }
 
 module "secure_harness" {
-  source  = "GoogleCloudPlatform/cloud-run/google//modules/secure-serverless-harness"
-  version = "~> 0.7"
+  # source  = "GoogleCloudPlatform/cloud-run/google//modules/secure-serverless-harness"
+  # version = "~> 0.7"
+  source = "git::https://github.com/amandakarina/terraform-google-cloud-run//modules/secure-serverless-harness?ref=feat/adds-harness-variable-to-customize-propagation-time"
 
   billing_account                             = var.billing_account
   security_project_name                       = "prj-security"
@@ -171,7 +174,7 @@ module "cloud_sql_firewall_rule" {
     source_tags = []
     allow = [{
       protocol = "tcp"
-      ports    = ["3307"]
+      ports    = [local.db_port]
     }]
     deny = []
     log_config = {
@@ -214,6 +217,31 @@ resource "null_resource" "create_user_pwd" {
       ${self.triggers.instance_project_id} \
       ${self.triggers.db_user} \
       ${self.triggers.db_host}
+    EOF
+  }
+
+  depends_on = [
+    module.safer_mysql_db,
+    google_secret_manager_secret.password_secret
+  ]
+}
+
+resource "null_resource" "create_certificate_secret" {
+
+  triggers = {
+    secret_name               = google_secret_manager_secret.certificate_secret.id
+    security_project_id       = module.secure_harness.security_project_id
+    terraform_service_account = var.terraform_service_account
+    certificate               = module.safer_mysql_db.instance_server_ca_cert[0].cert
+  }
+
+  provisioner "local-exec" {
+    command = <<EOF
+    cd ${path.module}/helpers && chmod u+x create_certificate_secret.sh && ./create_certificate_secret.sh \
+      ${var.terraform_service_account} \
+      ${google_secret_manager_secret.certificate_secret.id} \
+      ${module.secure_harness.security_project_id} \
+      "${module.safer_mysql_db.instance_server_ca_cert[0].cert}"
     EOF
   }
 
@@ -298,7 +326,7 @@ resource "google_project_iam_member" "cloud_sql_roles" {
 }
 
 resource "google_secret_manager_secret" "password_secret" {
-  secret_id = local.secret_name
+  secret_id = local.pwd_secret_name
   labels    = local.labels
   project   = module.secure_harness.security_project_id
 
@@ -315,9 +343,35 @@ resource "google_secret_manager_secret" "password_secret" {
   depends_on = [module.kms_keys]
 }
 
-resource "google_secret_manager_secret_iam_member" "member" {
+
+resource "google_secret_manager_secret" "certificate_secret" {
+  secret_id = local.cert_secret_name
+  labels    = local.labels
+  project   = module.secure_harness.security_project_id
+
+  replication {
+    user_managed {
+      replicas {
+        location = local.location
+        customer_managed_encryption {
+          kms_key_name = module.kms_keys.keys["key-secret"]
+        }
+      }
+    }
+  }
+  depends_on = [module.kms_keys]
+}
+
+resource "google_secret_manager_secret_iam_member" "pwd_member" {
   project   = google_secret_manager_secret.password_secret.project
   secret_id = google_secret_manager_secret.password_secret.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${module.secure_harness.service_account_email[module.secure_harness.serverless_project_ids[0]]}"
+}
+
+resource "google_secret_manager_secret_iam_member" "certificate_member" {
+  project   = google_secret_manager_secret.certificate_secret.project
+  secret_id = google_secret_manager_secret.certificate_secret.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${module.secure_harness.service_account_email[module.secure_harness.serverless_project_ids[0]]}"
 }
@@ -345,10 +399,16 @@ module "pubsub" {
   depends_on         = [module.secure_harness]
 }
 
-data "google_secret_manager_secret_version" "latest_version" {
+data "google_secret_manager_secret_version" "pwd_latest_version" {
   project    = module.secure_harness.security_project_id
-  secret     = local.secret_name
+  secret     = local.pwd_secret_name
   depends_on = [null_resource.create_user_pwd]
+}
+
+data "google_secret_manager_secret_version" "certificate_latest_version" {
+  project    = module.secure_harness.security_project_id
+  secret     = local.cert_secret_name
+  depends_on = [null_resource.create_certificate_secret]
 }
 
 module "secure_cloud_function" {
@@ -371,6 +431,8 @@ module "secure_cloud_function" {
   shared_vpc_name           = module.secure_harness.service_vpc[0].network.name
   prevent_destroy           = false
   ip_cidr_range             = "10.0.1.0/28"
+  # network_id                = module.secure_harness.service_vpc[0].network.id
+  # enable_private_worker     = false
   storage_source = {
     bucket = module.secure_harness.cloudfunction_source_bucket[module.secure_harness.serverless_project_ids[0]].name
     object = google_storage_bucket_object.cf_cloudsql_source_zip.name
@@ -379,16 +441,29 @@ module "secure_cloud_function" {
   environment_variables = {
     INSTANCE_PROJECT_ID = module.secure_harness.serverless_project_ids[1]
     INSTANCE_USER       = local.db_user
+    INSTANCE_IP         = module.safer_mysql_db.private_ip_address
+    INSTANCE_PORT       = local.db_port
     INSTANCE_LOCATION   = local.region
     INSTANCE_NAME       = module.safer_mysql_db.instance_name
     DATABASE_NAME       = local.db_name
+    DB_ROOT_CERT        = "/etc/secrets/server-ca.pem"
   }
 
   secret_environment_variables = [{
     key_name   = "INSTANCE_PWD"
     project_id = module.secure_harness.security_project_id
-    secret     = local.secret_name
-    version    = data.google_secret_manager_secret_version.latest_version.version
+    secret     = local.pwd_secret_name
+    version    = data.google_secret_manager_secret_version.pwd_latest_version.version
+  }]
+
+  secret_volumes = [{
+    project_id = module.secure_harness.security_project_id
+    secret     = local.cert_secret_name
+    versions = [{
+      version = data.google_secret_manager_secret_version.certificate_latest_version.version
+      path    = "server-ca.pem"
+    }]
+    mount_path = "/etc/secrets/"
   }]
 
   event_trigger = {
@@ -406,7 +481,8 @@ module "secure_cloud_function" {
   depends_on = [
     module.secure_harness,
     google_storage_bucket_object.cf_cloudsql_source_zip,
-    google_secret_manager_secret_iam_member.member,
+    google_secret_manager_secret_iam_member.pwd_member,
+    google_secret_manager_secret_iam_member.certificate_member,
     null_resource.create_and_populate_db,
     null_resource.create_user_pwd
   ]

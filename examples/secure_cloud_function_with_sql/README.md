@@ -96,6 +96,9 @@ The resources/services/activations/deletions that this example will create/trigg
 
 | Name | Description |
 |------|-------------|
+| certificate\_secret\_manager\_id | Secret Manager id created to store Database certificate. |
+| certificate\_secret\_manager\_name | Secret Manager name created to store Database certificate. |
+| certificate\_secret\_manager\_version | Secret Manager version created to store Database certificate. |
 | cloud\_function\_name | The service account email created to be used by Cloud Function. |
 | cloud\_sql\_kms\_key | The KMS Key create to encrypt Cloud SQL. |
 | cloudfunction\_bucket | The Cloud Function source bucket. |
@@ -103,19 +106,20 @@ The resources/services/activations/deletions that this example will create/trigg
 | cloudfunction\_url | The URL on which the deployed service is available. |
 | cloudsql\_project\_id | The Cloud SQL project id. |
 | connector\_id | VPC serverless connector ID. |
+| database\_certificate | The CA Certificate used to connect to the SQL Instance via SSL. |
 | mysql\_conn | The connection name of the master instance to be used in connection strings. |
 | mysql\_name | The name for Cloud SQL instance. |
 | mysql\_private\_ip\_address | The first private (PRIVATE) IPv4 address assigned for the master instance. |
 | mysql\_public\_ip\_address | The first public (PRIMARY) IPv4 address assigned for the master instance. |
 | mysql\_user | The user created in database instance. |
 | network\_project\_id | The network project id. |
+| pwd\_secret\_manager\_id | Secret Manager id created to store Database password. |
+| pwd\_secret\_manager\_name | Secret Manager name created to store Database password. |
+| pwd\_secret\_manager\_version | Secret Manager version created to store Database password. |
 | restricted\_access\_level\_name | Access level name. |
 | restricted\_service\_perimeter\_name | Service Perimeter name. |
 | scheduler\_name | Cloud Scheduler Job name. |
 | secret\_kms\_key | The KMS Key create to encrypt Secrets. |
-| secret\_manager\_id | Secret Manager id created to store Database password. |
-| secret\_manager\_name | Secret Manager name created to store Database password. |
-| secret\_manager\_version | Secret Manager version created to store Database password. |
 | security\_project\_id | The security project id. |
 | security\_project\_number | The security project number. |
 | serverless\_project\_id | The serverless project id. |
