@@ -22,6 +22,8 @@ locals {
   network_ip         = "10.0.0.3"
   webserver_instance = "webserver"
   subnet_ip          = "10.0.0.0/28"
+
+  private_service_connect_ip = "10.3.0.5"
 }
 resource "random_id" "random_folder_suffix" {
   byte_length = 2
@@ -42,7 +44,7 @@ module "secure_harness" {
   location                                    = local.location
   vpc_name                                    = "vpc-secure-cloud-function"
   subnet_ip                                   = local.subnet_ip
-  private_service_connect_ip                  = "10.3.0.5"
+  private_service_connect_ip                  = local.private_service_connect_ip
   create_access_context_manager_access_policy = var.create_access_context_manager_access_policy
   access_context_manager_policy_id            = var.access_context_manager_policy_id
   access_level_members                        = distinct(concat(var.access_level_members, ["serviceAccount:${var.terraform_service_account}"]))
@@ -54,7 +56,7 @@ module "secure_harness" {
   ingress_policies                            = var.ingress_policies
   serverless_type                             = "CLOUD_FUNCTION"
   use_shared_vpc                              = true
-  time_to_wait_vpc_sc_propagation             = "660s"
+  time_to_wait_vpc_sc_propagation             = "680s"
 
   service_account_project_roles = {
     "prj-secure-cloud-function" = [
@@ -66,24 +68,105 @@ module "secure_harness" {
   }
 
   network_project_extra_apis = [
-    "networksecurity.googleapis.com"
+    "networksecurity.googleapis.com",
+    "networkservices.googleapis.com",
+    "certificatemanager.googleapis.com"
   ]
 
   serverless_project_extra_apis = {
     "prj-secure-cloud-function" = [
-      "networksecurity.googleapis.com"
+      "networksecurity.googleapis.com",
+      "opsconfigmonitoring.googleapis.com"
     ]
   }
 }
 
-resource "google_project_service" "network_project_apis" {
-  for_each           = toset(["networkservices.googleapis.com", "certificatemanager.googleapis.com"])
-  project            = module.secure_harness.network_project_id[0]
-  service            = each.value
-  disable_on_destroy = false
+module "dns_packages_cloud" {
+  source      = "terraform-google-modules/cloud-dns/google"
+  version     = "~> 4.1"
+  project_id  = module.secure_harness.network_project_id[0]
+  type        = "private"
+  name        = "dz-packages-cloud-google-com"
+  domain      = "packages.cloud.google.com."
+  description = "Private DNS zone to configure packages.cloud.google.com"
 
-  depends_on = [module.secure_harness]
+  private_visibility_config_networks = [
+    module.secure_harness.service_vpc[0].network.self_link
+  ]
+
+  recordsets = [
+    {
+      name    = "*"
+      type    = "CNAME"
+      ttl     = 300
+      records = ["packages.cloud.google.com."]
+    },
+    {
+      name    = ""
+      type    = "A"
+      ttl     = 300
+      records = [local.private_service_connect_ip]
+    },
+  ]
 }
+
+module "dns_source_developers" {
+  source      = "terraform-google-modules/cloud-dns/google"
+  version     = "~> 4.1"
+  project_id  = module.secure_harness.network_project_id[0]
+  type        = "private"
+  name        = "dz-source-developers-google-com"
+  domain      = "source.developers.google.com."
+  description = "Private DNS zone to configure source.developers.google.com"
+
+  private_visibility_config_networks = [
+    module.secure_harness.service_vpc[0].network.self_link
+  ]
+
+  recordsets = [
+    {
+      name    = "*"
+      type    = "CNAME"
+      ttl     = 300
+      records = ["source.developers.google.com."]
+    },
+    {
+      name    = ""
+      type    = "A"
+      ttl     = 300
+      records = [local.private_service_connect_ip]
+    },
+  ]
+}
+
+#module "dns_dl_google" {
+#  source      = "terraform-google-modules/cloud-dns/google"
+#  version     = "~> 4.1"
+#  project_id  = module.secure_harness.network_project_id[0]
+#  type        = "private"
+#  name        = "dz-dl-google-com"
+#  domain      = "dl.google.com."
+#  description = "Private DNS zone to configure dl.google.com"
+#
+#  private_visibility_config_networks = [
+#    module.secure_harness.service_vpc[0].network.self_link
+#  ]
+#
+#  recordsets = [
+#    {
+#      name    = "*"
+#      type    = "CNAME"
+#      ttl     = 300
+#      records = ["dl.google.com."]
+#    },
+#    {
+#      name    = ""
+#      type    = "A"
+#      ttl     = 300
+#      records = [local.private_service_connect_ip]
+#    },
+#  ]
+#}
 
 data "archive_file" "cf-internal-server-source" {
   type        = "zip"
@@ -130,8 +213,7 @@ resource "null_resource" "generate_certificate" {
   }
 
   depends_on = [
-    module.secure_harness,
-    google_project_service.network_project_apis
+    module.secure_harness
   ]
 }
 

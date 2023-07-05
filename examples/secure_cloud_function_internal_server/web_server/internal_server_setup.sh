@@ -15,6 +15,39 @@
 # limitations under the License.
 #
 
+curl -x https://10.0.0.10:443 -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh --proxy-insecure
+# curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+
+sudo bash add-google-cloud-ops-agent-repo.sh --also-install
+sleep 60
+
+tee -a /etc/google-cloud-ops-agent/config.yaml <<'EOF'
+logging:
+  receivers:
+    syslog:
+      type: files
+      include_paths:
+      - /tmp/request_logs.log
+  service:
+    pipelines:
+      default_pipeline:
+        receivers: [syslog]
+metrics:
+  receivers:
+    hostmetrics:
+      type: hostmetrics
+      collection_interval: 60s
+  processors:
+    metrics_filter:
+      type: exclude_metrics
+      metrics_pattern: []
+  service:
+    pipelines:
+      default_pipeline:
+        receivers: [hostmetrics]
+        processors: [metrics_filter]
+EOF
+
 tee -a /tmp/index.html <<'EOF'
 ----------- hello world --------------
 EOF

@@ -60,7 +60,7 @@ resource "google_compute_instance" "internal_server" {
       image = "debian-cloud/debian-11"
     }
   }
-  tags                    = ["https-server"]
+  tags                    = ["https-server", "allow-google-apis"]
   metadata_startup_script = file("${abspath(path.module)}/web_server/internal_server_setup.sh")
 
   network_interface {
@@ -76,7 +76,10 @@ resource "google_compute_instance" "internal_server" {
 
   depends_on = [
     google_service_account_iam_member.service_account_user,
-    module.secure_harness
+    module.secure_harness,
+    module.dns_source_developers,
+    module.dns_packages_cloud,
+    #module.dns_dl_google
   ]
 }
 
