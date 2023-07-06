@@ -22,6 +22,7 @@ locals {
   network_ip         = "10.0.0.3"
   webserver_instance = "webserver"
   subnet_ip          = "10.0.0.0/28"
+  proxy_ip           = "10.0.0.10"
 
   private_service_connect_ip = "10.3.0.5"
 }
@@ -81,65 +82,65 @@ module "secure_harness" {
   }
 }
 
-module "dns_packages_cloud" {
-  source      = "terraform-google-modules/cloud-dns/google"
-  version     = "~> 4.1"
-  project_id  = module.secure_harness.network_project_id[0]
-  type        = "private"
-  name        = "dz-packages-cloud-google-com"
-  domain      = "packages.cloud.google.com."
-  description = "Private DNS zone to configure packages.cloud.google.com"
+# module "dns_packages_cloud" {
+#   source      = "terraform-google-modules/cloud-dns/google"
+#   version     = "~> 4.1"
+#   project_id  = module.secure_harness.network_project_id[0]
+#   type        = "private"
+#   name        = "dz-packages-cloud-google-com"
+#   domain      = "packages.cloud.google.com."
+#   description = "Private DNS zone to configure packages.cloud.google.com"
 
-  private_visibility_config_networks = [
-    module.secure_harness.service_vpc[0].network.self_link
-  ]
+#   private_visibility_config_networks = [
+#     module.secure_harness.service_vpc[0].network.self_link
+#   ]
 
-  recordsets = [
-    {
-      name    = "*"
-      type    = "CNAME"
-      ttl     = 300
-      records = ["packages.cloud.google.com."]
-    },
-    {
-      name    = ""
-      type    = "A"
-      ttl     = 300
-      records = [local.private_service_connect_ip]
-    },
-  ]
-}
+#   recordsets = [
+#     {
+#       name    = "*"
+#       type    = "CNAME"
+#       ttl     = 300
+#       records = ["packages.cloud.google.com."]
+#     },
+#     {
+#       name    = ""
+#       type    = "A"
+#       ttl     = 300
+#       records = [local.private_service_connect_ip]
+#     },
+#   ]
+# }
 
-module "dns_source_developers" {
-  source      = "terraform-google-modules/cloud-dns/google"
-  version     = "~> 4.1"
-  project_id  = module.secure_harness.network_project_id[0]
-  type        = "private"
-  name        = "dz-source-developers-google-com"
-  domain      = "source.developers.google.com."
-  description = "Private DNS zone to configure source.developers.google.com"
+# module "dns_source_developers" {
+#   source      = "terraform-google-modules/cloud-dns/google"
+#   version     = "~> 4.1"
+#   project_id  = module.secure_harness.network_project_id[0]
+#   type        = "private"
+#   name        = "dz-source-developers-google-com"
+#   domain      = "source.developers.google.com."
+#   description = "Private DNS zone to configure source.developers.google.com"
 
-  private_visibility_config_networks = [
-    module.secure_harness.service_vpc[0].network.self_link
-  ]
+#   private_visibility_config_networks = [
+#     module.secure_harness.service_vpc[0].network.self_link
+#   ]
 
-  recordsets = [
-    {
-      name    = "*"
-      type    = "CNAME"
-      ttl     = 300
-      records = ["source.developers.google.com."]
-    },
-    {
-      name    = ""
-      type    = "A"
-      ttl     = 300
-      records = [local.private_service_connect_ip]
-    },
-  ]
-}
+#   recordsets = [
+#     {
+#       name    = "*"
+#       type    = "CNAME"
+#       ttl     = 300
+#       records = ["source.developers.google.com."]
+#     },
+#     {
+#       name    = ""
+#       type    = "A"
+#       ttl     = 300
+#       records = [local.private_service_connect_ip]
+#     },
+#   ]
+# }
 
-#module "dns_dl_google" {
+# module "dns_dl_google" {
 #  source      = "terraform-google-modules/cloud-dns/google"
 #  version     = "~> 4.1"
 #  project_id  = module.secure_harness.network_project_id[0]
@@ -147,11 +148,11 @@ module "dns_source_developers" {
 #  name        = "dz-dl-google-com"
 #  domain      = "dl.google.com."
 #  description = "Private DNS zone to configure dl.google.com"
-#
+
 #  private_visibility_config_networks = [
 #    module.secure_harness.service_vpc[0].network.self_link
 #  ]
-#
+
 #  recordsets = [
 #    {
 #      name    = "*"
@@ -166,7 +167,7 @@ module "dns_source_developers" {
 #      records = [local.private_service_connect_ip]
 #    },
 #  ]
-#}
+# }
 
 data "archive_file" "cf-internal-server-source" {
   type        = "zip"
@@ -234,7 +235,7 @@ module "secure_web_proxy" {
   subnetwork_id       = "projects/${module.secure_harness.network_project_id[0]}/regions/${local.region}/subnetworks/${module.secure_harness.service_subnet[0]}"
   subnetwork_ip_range = local.subnet_ip
   certificates        = ["projects/${module.secure_harness.network_project_id[0]}/locations/${local.region}/certificates/swp-certificate"]
-  addresses           = ["10.0.0.10"]
+  addresses           = [local.proxy_ip]
   ports               = [443]
   proxy_ip_range      = "10.129.0.0/23"
 
@@ -250,7 +251,10 @@ module "secure_web_proxy" {
     "*github.com/google/*",
     "*github.com/googleapis/*",
     "*github.com/json-iterator/go",
-    "*dl.google.com/*"
+    "*dl.google.com/*",
+    "*debian.map.fastly.net/*",
+    "*deb.debian.org/*",
+    "*packages.cloud.google.com/*"
   ]
 
   depends_on = [
@@ -282,8 +286,8 @@ module "secure_cloud_function" {
   network_id                = module.secure_harness.service_vpc[0].network.id
 
   build_environment_variables = {
-    HTTP_PROXY  = "http://10.0.0.10:443"
-    HTTPS_PROXY = "http://10.0.0.10:443" # Using http because is a self-signed certification (just for test porpuse)
+    HTTP_PROXY  = "http://${local.proxy_ip}:443"
+    HTTPS_PROXY = "http://${local.proxy_ip}:443" # Using http because is a self-signed certification (just for test porpuse)
   }
 
   storage_source = {
